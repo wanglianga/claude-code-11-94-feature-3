@@ -30,6 +30,7 @@ const error = ref('')
 const ROLE_NAMES = {
   receiver: '接收员', dismantler: '拆解员', safety: '安全工程师',
   warehouse: '仓库', downstream: '下游买家', admin: '管理员',
+  service: '售后客服', engineer: '工程人员', finance: '财务',
 }
 const roleName = (r) => ROLE_NAMES[r] || r
 

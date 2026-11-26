@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .database import Base, engine
-from .routers import audit, auth, dismantling, receiving, safety, scenario, warehouse
+from .routers import aftersales, audit, auth, dismantling, receiving, safety, scenario, warehouse
 from .services.errors import AuthError, BusinessRuleError, NotFoundError
 
 settings = get_settings()
@@ -22,7 +22,10 @@ app.add_middleware(
 
 @app.exception_handler(BusinessRuleError)
 async def business_handler(_: Request, exc: BusinessRuleError):
-    return JSONResponse(status_code=409, content={"ok": False, "code": exc.code, "message": exc.message})
+    content = {"ok": False, "code": exc.code, "message": exc.message}
+    if exc.details:
+        content["details"] = exc.details
+    return JSONResponse(status_code=409, content=content)
 
 
 @app.exception_handler(NotFoundError)
@@ -42,6 +45,7 @@ app.include_router(safety.router)
 app.include_router(warehouse.router)
 app.include_router(scenario.router)
 app.include_router(audit.router)
+app.include_router(aftersales.router)
 
 
 @app.get("/")

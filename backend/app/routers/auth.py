@@ -25,5 +25,6 @@ def me(user: models.User = Depends(get_current_user)):
 
 
 @router.get("/users")
-def list_users(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
+def list_users(db: Session = Depends(get_db)):
+    # 演示系统的无密码账号清单：登录页在尚无 X-Username 时也要能拉取，故不要求鉴权
     return [user_out(u) for u in db.scalars(select(models.User).order_by(models.User.id)).all()]

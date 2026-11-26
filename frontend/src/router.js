@@ -11,6 +11,8 @@ const routes = [
   { path: '/warehouse', component: () => import('./views/Warehouse.vue'), title: '仓库拣货与核对' },
   { path: '/downstream', component: () => import('./views/Downstream.vue'), title: '下游签收端' },
   { path: '/scenario', component: () => import('./views/Scenario.vue'), title: 'L-7 策略对比场景' },
+  { path: '/aftersales', component: () => import('./views/Aftersales.vue'), title: '售后客服案件台' },
+  { path: '/assignment', component: () => import('./views/Assignment.vue'), title: '多案备件精确指派' },
   { path: '/audit', component: () => import('./views/Audit.vue'), title: '全链路审计日志' },
 ]
 

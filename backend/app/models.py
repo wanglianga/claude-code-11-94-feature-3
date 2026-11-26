@@ -335,3 +335,302 @@ class AuditLog(Base):
     entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ============================================================================
+# 售后客服：保修申诉、两条办理路径、备件精确指派、实物/资金独立状态
+# ============================================================================
+
+
+class AftersalesCase(Base):
+    """售后申诉案件（如客户 O-31）。
+
+    保修窗口由虚构合同固定：验收日 00:00 起、次年对应日 00:00 前（右端开区间）。
+    “在保”只是合同时间判断，责任必须由返修检测/工程补核结论证明。
+    """
+
+    __tablename__ = "as_cases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    customer_code: Mapped[str] = mapped_column(String(40), index=True)  # O-31
+    title: Mapped[str] = mapped_column(String(200), default="")
+    path: Mapped[str] = mapped_column(String(24), default="advance_replace")
+    # advance_replace=先寄替换件后收旧件 | inspect_first=先收旧件复检后决定换货
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    # open|closed|withdrawn
+
+    module_serial: Mapped[str] = mapped_column(String(64), index=True)  # 整机序列号
+    module_model: Mapped[str] = mapped_column(String(64), default="PM-X3")
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))   # 验收时间
+    warranty_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    warranty_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))   # 右端点（不含）
+    appealed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    original_appeal: Mapped[str] = mapped_column(Text, default="")           # 原申诉，永久保留
+    engineering_explanation: Mapped[str] = mapped_column(Text, default="")   # 工程解释，保留
+
+    # 责任结论：undetermined 时任何备注都不算结论
+    liability_status: Mapped[str] = mapped_column(String(20), default="undetermined")
+    # undetermined|supplier|transport|customer|shared
+    liability_basis: Mapped[str] = mapped_column(Text, default="")
+    liability_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    liability_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 材料收齐
+    materials_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    materials_note: Mapped[str] = mapped_column(Text, default="")
+
+    # 客户停机时段
+    downtime_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    downtime_ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 服务承诺与下一次联系
+    commitment_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    commitment_note: Mapped[str] = mapped_column(String(200), default="")
+    next_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_contact_note: Mapped[str] = mapped_column(String(200), default="")
+
+    # 当前保管人（由 CustodyEvent 流转）：customer|logistics|warehouse|lab
+    custodian_party: Mapped[str] = mapped_column(String(20), default="customer")
+    custodian_name: Mapped[str] = mapped_column(String(128), default="客户")
+
+    # 先检路径的付款暂缓
+    payment_held: Mapped[bool] = mapped_column(Boolean, default=False)
+    payment_hold_reason: Mapped[str] = mapped_column(Text, default="")
+    payment_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    payment_resolution: Mapped[str] = mapped_column(String(24), default="")  # released|deducted|waived
+
+    closed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closure_note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EngineeringCheck(Base):
+    """工程人员补核项（运输压痕、缺失的安装温度回执等）。备注不能替代结论。"""
+
+    __tablename__ = "as_engineering_checks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))  # transport_dent|install_temp_receipt|other
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|concluded
+    result: Mapped[str | None] = mapped_column(String(16), nullable=True)  # confirmed|ruled_out
+    conclusion: Mapped[str] = mapped_column(Text, default="")
+    engineer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    concluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CaseContact(Base):
+    """联系记录（每次沟通留痕，并可推进下一次联系时间）。"""
+
+    __tablename__ = "as_contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(24), default="phone")  # phone|im|onsite|letter
+    note: Mapped[str] = mapped_column(Text, default="")
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CustodyEvent(Base):
+    """实物保管人流转台账（替换件/旧件分别记录）。"""
+
+    __tablename__ = "as_custody_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(16), default="old_part")  # old_part|replacement
+    from_party: Mapped[str] = mapped_column(String(128), default="")
+    to_party: Mapped[str] = mapped_column(String(128))
+    note: Mapped[str] = mapped_column(Text, default="")
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Deposit(Base):
+    """押金及其退款状态。退款通道结果未知是独立状态，不能当作已退。"""
+
+    __tablename__ = "as_deposits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), unique=True, index=True)
+    amount: Mapped[int] = mapped_column(Integer, default=0)  # 整数元
+    status: Mapped[str] = mapped_column(String(20), default="not_required", index=True)
+    # not_required|pending|paid|refund_pending|refund_unknown|refunded|forfeited
+    gateway_ref: Mapped[str] = mapped_column(String(64), default="")
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refund_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    unknown_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    query_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SpareUnit(Base):
+    """备件实物（按序列号管理）。候选方案不占用，批准出库时才改状态。"""
+
+    __tablename__ = "as_spare_units"
+    __table_args__ = (UniqueConstraint("serial_no", name="uq_as_spare_serial"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    serial_no: Mapped[str] = mapped_column(String(64), index=True)
+    batch: Mapped[str] = mapped_column(String(24), default="REAL", index=True)
+    model_code: Mapped[str] = mapped_column(String(64), default="PM-X3")
+    name: Mapped[str] = mapped_column(String(128), default="兼容替换模组")
+    # available|allocated|shipped|installed|consumed
+    status: Mapped[str] = mapped_column(String(16), default="available", index=True)
+    safety_released: Mapped[bool] = mapped_column(Boolean, default=True)  # 安全资格/已放行
+    qualification_note: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(20), default="stock")  # stock|restock|sample|rework
+    # 只做过端子维修的整机：禁止再作为整机重复换出
+    whole_exchange_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AssignDemand(Base):
+    """指派批次中本批已批准（或复检后追加批准）的案件需求。"""
+
+    __tablename__ = "as_assign_demands"
+    __table_args__ = (UniqueConstraint("batch", "code", name="uq_as_demand_batch_code"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch: Mapped[str] = mapped_column(String(24), index=True)
+    code: Mapped[str] = mapped_column(String(40))   # 稳定编号，如 D-O31 / R1 / J1
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("as_cases.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    approved: Mapped[bool] = mapped_column(Boolean, default=True)
+    fulfilled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CompatEdge(Base):
+    """固定兼容表 + 整数调配费用。"""
+
+    __tablename__ = "as_compat_edges"
+    __table_args__ = (UniqueConstraint("batch", "demand_code", "supply_code",
+                                       name="uq_as_edge_triple"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch: Mapped[str] = mapped_column(String(24), index=True)
+    demand_code: Mapped[str] = mapped_column(String(40), index=True)
+    supply_code: Mapped[str] = mapped_column(String(64), index=True)
+    cost: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class AssignmentPlan(Base):
+    """一次精确搜索得到的候选方案。候选不占库存；批准时原子复核，过期则整案退回。"""
+
+    __tablename__ = "as_assignment_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    batch: Mapped[str] = mapped_column(String(24), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="candidate", index=True)
+    # candidate|approved|stale
+    fulfilled_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_cost: Mapped[int] = mapped_column(Integer, default=0)
+    items: Mapped[list] = mapped_column(JSON, default=list)   # [{demand_code,supply_code,cost}]
+    unmet: Mapped[list] = mapped_column(JSON, default=list)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict)    # 分支数/耗时/空间等
+    stale_reasons: Mapped[list] = mapped_column(JSON, default=list)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReplacementOrder(Base):
+    """替换件出库/寄递单：①寄出 ②客户签收 为两个独立状态。
+
+    spare_unit_id 唯一约束从数据库层杜绝同一整机序列号产生第二张换出单。
+    """
+
+    __tablename__ = "as_replacement_orders"
+    __table_args__ = (UniqueConstraint("spare_unit_id", name="uq_as_repl_spare_once"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int | None] = mapped_column(ForeignKey("as_cases.id"), nullable=True, index=True)
+    plan_id: Mapped[int | None] = mapped_column(ForeignKey("as_assignment_plans.id"), nullable=True)
+    spare_unit_id: Mapped[int] = mapped_column(ForeignKey("as_spare_units.id"))
+    spare_serial: Mapped[str] = mapped_column(String(64), index=True)
+    demand_code: Mapped[str] = mapped_column(String(40), default="")
+    cost: Mapped[int] = mapped_column(Integer, default=0)
+
+    shipment_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # pending|shipped
+    tracking_no: Mapped[str] = mapped_column(String(64), default="")
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    shipped_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    signoff_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # pending|signed
+    signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    signer: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OldPartReturn(Base):
+    """旧件回收：③回收状态独立。未实收（received）不能成为返修库存。"""
+
+    __tablename__ = "as_old_part_returns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), unique=True, index=True)
+    whole_serial: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="not_sent", index=True)
+    # not_sent|in_transit|received
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    tracking_no: Mapped[str] = mapped_column(String(64), default="")
+    # 实物最终去向/处置，结清实物待办时必须非 pending
+    disposition: Mapped[str] = mapped_column(String(24), default="pending")
+    # pending|rework_stock|terminal_repair|repaired_returned|scrapped|returned_customer
+    disposition_note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReworkInspection(Base):
+    """④返修检测：独立于签收/回收/退款的状态机。"""
+
+    __tablename__ = "as_rework_inspections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="not_started", index=True)
+    # not_started|in_progress|concluded
+    result: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # terminal_repairable|repairable|no_fault|fault_confirmed|scrap
+    liability: Mapped[str] = mapped_column(String(20), default="undetermined")
+    report: Mapped[str] = mapped_column(Text, default="")
+    inspector_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    concluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RepairRecord(Base):
+    """真实维修记录：只修端子时记录真实部件与旧件/整机去向。"""
+
+    __tablename__ = "as_repair_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("as_cases.id"), index=True)
+    old_whole_serial: Mapped[str] = mapped_column(String(64), index=True)
+    repair_kind: Mapped[str] = mapped_column(String(20), default="terminal_only")
+    # terminal_only|component_replace|whole_replace
+    actual_component_name: Mapped[str] = mapped_column(String(128), default="")
+    actual_component_serial: Mapped[str] = mapped_column(String(64), default="")
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    old_component_disposition: Mapped[str] = mapped_column(String(200), default="")
+    whole_unit_whereabouts: Mapped[str] = mapped_column(String(200), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    technician_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

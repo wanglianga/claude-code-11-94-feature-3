@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from .enums import PackStatus
+from .seed_aftersales import DEMO_USERS, seed_aftersales
 from .services import receiving, safety
 from .services.errors import BusinessRuleError
 
@@ -19,7 +20,7 @@ SEED_USERS = [
     ("u_warehouse", "孙仓储", "warehouse", "仓储班"),
     ("u_downstream", "周买家", "downstream", "华东储能公司"),
     ("u_admin", "管理员", "admin", "中心管理组"),
-]
+] + DEMO_USERS
 
 
 def seed(db: Session) -> dict:
@@ -33,6 +34,9 @@ def seed(db: Session) -> dict:
             created["users"] += 1
         user_map[username] = u
     db.flush()
+
+    # 售后客服域种子（幂等，独立于 L-7 是否已经播种）
+    seed_aftersales(db, user_map)
 
     now = datetime.now(timezone.utc)
     dev_ok = db.scalar(select(models.Device).where(models.Device.device_no == "DEV-OK"))

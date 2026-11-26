@@ -12,6 +12,8 @@
         <router-link to="/safety">安全审批</router-link>
         <router-link to="/warehouse">仓库/核对</router-link>
         <router-link to="/downstream">下游签收</router-link>
+        <router-link to="/aftersales">售后案件台</router-link>
+        <router-link to="/assignment">备件指派</router-link>
         <router-link to="/scenario">L-7 场景</router-link>
         <router-link to="/audit">审计日志</router-link>
       </nav>
@@ -31,6 +33,7 @@ import { store } from './api'
 const ROLE_NAMES = {
   receiver: '接收员', dismantler: '拆解员', safety: '安全工程师',
   warehouse: '仓库', downstream: '下游买家', admin: '管理员',
+  service: '售后客服', engineer: '工程人员', finance: '财务',
 }
 const roleName = (r) => ROLE_NAMES[r] || r
 </script>

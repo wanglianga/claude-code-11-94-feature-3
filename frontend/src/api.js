@@ -30,6 +30,7 @@ async function request(method, url, body) {
     const err = new Error(data.message || `请求失败 ${resp.status}`)
     err.code = data.code
     err.status = resp.status
+    err.details = data.details
     throw err
   }
   return data
